@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 from .common.migration import migrate_file
-from .common.operations import assign_ids, configured_output_dir, format_date_columns, process_inbox, refresh_all, refresh_gantt, refresh_views, sync_completed, sync_gantt_dates, sync_progress, validate_workbook
+from .common.confirmation import confirm_clear_data
+from .common.operations import assign_ids, clear_workbook_data, configured_output_dir, format_date_columns, process_inbox, refresh_all, refresh_gantt, refresh_views, sync_completed, sync_gantt_dates, sync_progress, validate_workbook
 from .common.backup import create_backup
 from .common.service import export_workbook, import_workbook
 from .common.specs import get_spec
@@ -61,6 +62,11 @@ def parser() -> argparse.ArgumentParser:
     date_format.add_argument("workbook", type=Path)
     date_format.add_argument("--backup-dir", type=Path, default=Path("backup"))
     date_format.add_argument("--dry-run", action="store_true")
+    clear_data = commands.add_parser("clear-data", help="Python専用: 設定・書式を残して全運用データを消去")
+    clear_data.add_argument("kind", choices=("team", "personal"))
+    clear_data.add_argument("workbook", type=Path)
+    clear_data.add_argument("--backup-dir", type=Path)
+    clear_data.add_argument("--dry-run", action="store_true")
     return root
 
 
@@ -100,6 +106,15 @@ def main() -> int:
         print(json.dumps(sync_completed(args.workbook, args.backup_dir, args.dry_run), ensure_ascii=False, indent=2))
     elif args.command == "format-dates":
         print(json.dumps(format_date_columns(args.workbook, args.backup_dir, args.dry_run), ensure_ascii=False, indent=2))
+    elif args.command == "clear-data":
+        if args.dry_run:
+            result = clear_workbook_data(args.workbook, args.kind, args.backup_dir or Path("backup"), True)
+        elif not confirm_clear_data(args.workbook, args.kind):
+            result = {"status": "cancelled", "message": "ユーザーが全データクリアを中止しました。"}
+        else:
+            backup_dir = args.backup_dir or configured_output_dir(args.workbook, args.kind)
+            result = clear_workbook_data(args.workbook, args.kind, backup_dir)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == "validate":
         result = validate_workbook(args.workbook, args.kind)
         print(json.dumps(result, ensure_ascii=False, indent=2))

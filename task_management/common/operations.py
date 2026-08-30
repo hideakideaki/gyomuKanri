@@ -18,6 +18,34 @@ from .progress_logic import ProgressSource, sync_progress_records
 from .rich_text import hex_to_ole_color
 
 
+CLEAR_DATA_LAYOUTS: dict[str, tuple[tuple[str, int], ...]] = {
+    "personal": (
+        ("01_個人タスク", 3),
+        ("02_今週", 3),
+        ("03_今日", 3),
+        ("04_予定", 3),
+        ("05_週次振り返り", 3),
+        ("06_完了ログ", 3),
+        ("08_週ガント", 5),
+        ("09_日ガント", 5),
+        ("10_インボックス", 3),
+        ("11_進捗ログ", 3),
+        ("12_課題・リスク", 3),
+        ("13_意思決定", 3),
+    ),
+    "team": (
+        ("01_テーマ一覧", 3),
+        ("02_タスク", 3),
+        ("03_週ガント", 5),
+        ("04_日ガント", 6),
+        ("05_週次進捗", 3),
+        ("06_進捗ログ", 3),
+        ("07_課題・リスク", 3),
+        ("08_意思決定", 3),
+    ),
+}
+
+
 def _settings(excel: ExcelClient, sheet_name: str) -> dict[str, Any]:
     _, rows = excel.read_table(sheet_name)
     return {str(row.get("設定キー") or "").strip(): row.get("設定値") for row in rows if row.get("設定キー") not in (None, "")}
@@ -194,6 +222,48 @@ def _gantt_color(source: dict[str, Any], kind: str, end: date, today: date) -> s
     return "#5B9BD5"
 
 
+def _date_header_groups(column_dates: dict[int, date], attribute: str) -> list[tuple[int, int, int]]:
+    """日付列を年または月の連続範囲にまとめる。"""
+    groups: list[tuple[int, int, int]] = []
+    for column, current in sorted(column_dates.items()):
+        key = current.year if attribute == "year" else current.month
+        if groups and groups[-1][2] == key and groups[-1][1] + 1 == column:
+            start, _, previous_key = groups[-1]
+            groups[-1] = (start, column, previous_key)
+        else:
+            groups.append((column, column, key))
+    return groups
+
+
+def _merge_personal_gantt_headers(ws: Any, left_end: int, column_dates: dict[int, date]) -> None:
+    """個人ガントの左見出しを縦結合し、年・月を期間単位で横結合する。"""
+    for column in range(1, left_end + 1):
+        header_range = ws.Range(ws.Cells(2, column), ws.Cells(4, column))
+        values = [ws.Cells(row, column).Value for row in range(2, 5)]
+        header = next((value for value in values if value not in (None, "")), "")
+        header_range.UnMerge()
+        header_range.ClearContents()
+        ws.Cells(2, column).Value = header
+        header_range.Merge()
+        header_range.HorizontalAlignment = -4108  # xlCenter
+        header_range.VerticalAlignment = -4108
+        header_range.WrapText = True
+
+    first_date_column = min(column_dates)
+    last_date_column = max(column_dates)
+    for row, attribute, suffix in ((2, "year", "年"), (3, "month", "月")):
+        timeline_range = ws.Range(ws.Cells(row, first_date_column), ws.Cells(row, last_date_column))
+        timeline_range.UnMerge()
+        timeline_range.ClearContents()
+        for start, end, value in _date_header_groups(column_dates, attribute):
+            group_range = ws.Range(ws.Cells(row, start), ws.Cells(row, end))
+            ws.Cells(row, start).Value = f"{value}{suffix}"
+            if end > start:
+                group_range.Merge()
+            group_range.HorizontalAlignment = -4108
+            group_range.VerticalAlignment = -4108
+
+
 def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
     task_sheet = "02_タスク" if kind == "team" else "01_個人タスク"
     week_sheet = "03_週ガント" if kind == "team" else "08_週ガント"
@@ -229,6 +299,11 @@ def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
             else:
                 selected_sources = [row for row in tasks if row.get("個人タスクID")]
             timeline_start = None
+            column_dates: dict[int, date] = {}
+            periods: dict[str, int] = {}
+            if weekly:
+                periods = excel.week_index(sheet_name, header_row=4)
+                column_dates = {column: date.fromisoformat(week) for week, column in periods.items()}
             if not weekly:
                 year_text = str(ws.Cells(2, left_end + 1).Value or "").replace("年", "")
                 month_text = str(ws.Cells(3, left_end + 1).Value or "").replace("月", "")
@@ -237,6 +312,12 @@ def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
                     timeline_start = date(int(float(year_text)), int(float(month_text)), int(float(day_text)))
                 except ValueError:
                     timeline_start = min((_task_period(row, kind)[0] for row in selected_sources if _task_period(row, kind)[0]), default=local_today())
+                column_dates = {
+                    left_end + 1 + index: timeline_start + timedelta(days=index)
+                    for index in range(last_col - left_end)
+                }
+            if kind == "personal" and column_dates:
+                _merge_personal_gantt_headers(ws, left_end, column_dates)
             for offset, (record, source) in enumerate(zip(records, selected_sources), start=data_row):
                 for header, value in record.items():
                     column = headers.get(header)
@@ -249,7 +330,6 @@ def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
                     continue
                 color = _gantt_color(source, kind, end, local_today())
                 if weekly:
-                    periods = excel.week_index(sheet_name, header_row=4)
                     for week, column in periods.items():
                         week_start = date.fromisoformat(week)
                         if week_start <= end and week_start + timedelta(days=6) >= start:
@@ -347,6 +427,38 @@ def validate_workbook(workbook: Path, kind: str) -> dict[str, Any]:
             for sheet, header in (("01_個人タスク", "個人タスクID"), ("10_インボックス", "受付ID"), ("12_課題・リスク", "課題・リスクID"), ("13_意思決定", "決定ID")):
                 excel.id_index(sheet, header)
     return {"valid": not errors, "errors": errors, "error_count": len(errors)}
+
+
+def clear_workbook_data(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+    """設定・見出し・書式・VBAを残し、運用データだけを全シートから消去する。"""
+    layouts = CLEAR_DATA_LAYOUTS[kind]
+    result: dict[str, Any] = {
+        "status": "dry-run" if dry_run else "success",
+        "kind": kind,
+        "target_sheets": [sheet for sheet, _ in layouts],
+        "cleared_sheets": 0,
+        "dry_run": dry_run,
+    }
+    if dry_run:
+        return result
+    with ExcelClient(workbook) as excel:
+        backup = make_backup_path(workbook, backup_dir)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        excel.workbook.SaveCopyAs(str(backup.resolve()))
+        result["backup"] = str(backup)
+        for sheet_name, data_row in layouts:
+            ws = excel.sheet(sheet_name)
+            last_row = ws.UsedRange.Row + ws.UsedRange.Rows.Count - 1
+            last_column = ws.UsedRange.Column + ws.UsedRange.Columns.Count - 1
+            if last_row < data_row:
+                continue
+            target = ws.Range(ws.Cells(data_row, 1), ws.Cells(last_row, last_column))
+            target.ClearContents()
+            if "ガント" in sheet_name:
+                target.Interior.ColorIndex = -4142  # xlColorIndexNone
+            result["cleared_sheets"] += 1
+        excel.save()
+    return result
 
 
 def format_date_columns(workbook: Path, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
