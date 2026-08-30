@@ -5,10 +5,11 @@ import json
 from pathlib import Path
 
 from .common.migration import migrate_file
-from .common.confirmation import confirm_clear_data
+from .common.confirmation import confirm_clear_data, confirm_replace_import
 from .common.operations import assign_ids, clear_workbook_data, configured_output_dir, format_date_columns, process_inbox, refresh_all, refresh_gantt, refresh_views, sync_completed, sync_gantt_dates, sync_progress, validate_workbook
 from .common.backup import create_backup
 from .common.service import export_workbook, import_workbook
+from .common.safe_replace import replace_import_preflight, safe_replace_import
 from .common.specs import get_spec
 
 
@@ -67,6 +68,12 @@ def parser() -> argparse.ArgumentParser:
     clear_data.add_argument("workbook", type=Path)
     clear_data.add_argument("--backup-dir", type=Path)
     clear_data.add_argument("--dry-run", action="store_true")
+    replace_import = commands.add_parser("replace-import", help="全クリア＋Import＋検証＋失敗時復元")
+    replace_import.add_argument("kind", choices=("team", "personal"))
+    replace_import.add_argument("workbook", type=Path)
+    replace_import.add_argument("source", type=Path)
+    replace_import.add_argument("--backup-dir", type=Path)
+    replace_import.add_argument("--dry-run", action="store_true")
     return root
 
 
@@ -115,6 +122,21 @@ def main() -> int:
             backup_dir = args.backup_dir or configured_output_dir(args.workbook, args.kind)
             result = clear_workbook_data(args.workbook, args.kind, backup_dir)
         print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == "replace-import":
+        spec = get_spec(args.kind)
+        preflight = replace_import_preflight(args.workbook, args.source, spec)
+        if args.dry_run:
+            result = {"status": "dry-run", "preflight": preflight}
+        elif not preflight["valid"]:
+            result = {"status": "preflight_failed", "preflight": preflight}
+        elif not confirm_replace_import(args.workbook, args.source):
+            result = {"status": "cancelled", "message": "ユーザーが安全移行を中止しました。"}
+        else:
+            backup_dir = args.backup_dir or configured_output_dir(args.workbook, args.kind)
+            result = safe_replace_import(args.workbook, args.source, spec, backup_dir)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result["status"] in {"preflight_failed", "rolled_back"}:
+            return 2
     elif args.command == "validate":
         result = validate_workbook(args.workbook, args.kind)
         print(json.dumps(result, ensure_ascii=False, indent=2))

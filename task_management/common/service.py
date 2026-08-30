@@ -172,7 +172,14 @@ def export_workbook(workbook: Path, output: Path, spec: WorkbookSpec) -> None:
     dump_v3(WorkbookData(spec.format, datetime.now().isoformat(timespec="seconds"), tables, progress), output)
 
 
-def import_workbook(workbook: Path, source: Path, spec: WorkbookSpec, backup_dir: Path, dry_run: bool = False) -> dict[str, object]:
+def import_workbook(
+    workbook: Path,
+    source: Path,
+    spec: WorkbookSpec,
+    backup_dir: Path,
+    dry_run: bool = False,
+    create_backup_before: bool = True,
+) -> dict[str, object]:
     data = load_v3(source)
     if data.format != spec.format:
         raise ValueError(f"ブック種別とJSON formatが一致しません: {data.format}")
@@ -196,9 +203,10 @@ def import_workbook(workbook: Path, source: Path, spec: WorkbookSpec, backup_dir
         # Excelで開いているxlsmをshutil.copy2すると、ExcelやDropboxの
         # ファイルロックによりPermissionErrorになることがある。
         # 接続中のExcel自身にコピーを作らせ、未保存内容も含む安全な退避にする。
-        backup = make_backup_path(workbook, backup_dir)
-        excel.workbook.SaveCopyAs(str(backup.resolve()))
-        result["backup"] = str(backup)
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
         for sheet_name, header in added_columns:
             _append_column(excel, sheet_name, header)
         for week in added_weeks:

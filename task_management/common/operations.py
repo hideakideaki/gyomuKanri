@@ -106,7 +106,7 @@ def _write_personal_levels(excel: ExcelClient, tasks: list[dict[str, Any]]) -> N
             excel.sheet("01_個人タスク").Cells(rows[task_id], level_column).Value = task.get("Level")
 
 
-def refresh_views(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def refresh_views(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
     with ExcelClient(workbook, read_only=dry_run) as excel:
         if kind == "team":
             _, tasks = excel.read_table("02_タスク")
@@ -125,9 +125,10 @@ def refresh_views(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
         result = {"rows": {sheet: len(records) for sheet, records in outputs.items()}, "dry_run": dry_run}
         if dry_run:
             return result
-        backup = make_backup_path(workbook, backup_dir)
-        excel.workbook.SaveCopyAs(str(backup.resolve()))
-        result["backup"] = str(backup)
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
         if kind == "personal":
             _write_personal_levels(excel, tasks)
             apply_named_column_formats(excel, "01_個人タスク")
@@ -147,7 +148,7 @@ def refresh_views(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
         return result
 
 
-def sync_completed(workbook: Path, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def sync_completed(workbook: Path, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
     with ExcelClient(workbook, read_only=dry_run) as excel:
         _, tasks = excel.read_table("01_個人タスク")
         _, completed = excel.read_table("06_完了ログ")
@@ -157,15 +158,16 @@ def sync_completed(workbook: Path, backup_dir: Path, dry_run: bool = False) -> d
         result = {"added": len(additions), "dry_run": dry_run}
         if dry_run or not additions:
             return result
-        backup = make_backup_path(workbook, backup_dir)
-        excel.workbook.SaveCopyAs(str(backup.resolve()))
-        result["backup"] = str(backup)
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
         _write_records(excel, "06_完了ログ", completed + additions)
         excel.save()
         return result
 
 
-def process_inbox(workbook: Path, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def process_inbox(workbook: Path, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
     with ExcelClient(workbook, read_only=dry_run) as excel:
         _, tasks = excel.read_table("01_個人タスク")
         _, inbox = excel.read_table("10_インボックス")
@@ -183,9 +185,10 @@ def process_inbox(workbook: Path, backup_dir: Path, dry_run: bool = False) -> di
         result = {"created": len(new_tasks), "dry_run": dry_run}
         if dry_run or not new_tasks:
             return result
-        backup = make_backup_path(workbook, backup_dir)
-        excel.workbook.SaveCopyAs(str(backup.resolve()))
-        result["backup"] = str(backup)
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
         _write_records(excel, "01_個人タスク", combined)
         _write_records(excel, "10_インボックス", inbox)
         excel.save()
@@ -264,7 +267,7 @@ def _merge_personal_gantt_headers(ws: Any, left_end: int, column_dates: dict[int
             group_range.VerticalAlignment = -4108
 
 
-def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
     task_sheet = "02_タスク" if kind == "team" else "01_個人タスク"
     week_sheet = "03_週ガント" if kind == "team" else "08_週ガント"
     day_sheet = "04_日ガント" if kind == "team" else "09_日ガント"
@@ -276,9 +279,10 @@ def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
         result = {"weekly_rows": len(week_records), "daily_rows": len(day_records), "dry_run": dry_run}
         if dry_run:
             return result
-        backup = make_backup_path(workbook, backup_dir)
-        excel.workbook.SaveCopyAs(str(backup.resolve()))
-        result["backup"] = str(backup)
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
         if kind == "personal":
             _write_personal_levels(excel, tasks)
         for sheet_name, records, weekly, data_row in ((week_sheet, week_records, True, 5), (day_sheet, day_records, False, 6 if kind == "team" else 5)):
@@ -379,7 +383,7 @@ def sync_gantt_dates(workbook: Path, kind: str, backup_dir: Path, dry_run: bool 
         return result
 
 
-def assign_ids(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def assign_ids(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
     if kind == "team":
         with ExcelClient(workbook, read_only=True) as excel:
             settings = _settings(excel, "09_設定")
@@ -402,8 +406,11 @@ def assign_ids(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = Fals
     result: dict[str, Any] = {"assigned": count, "dry_run": dry_run}
     if dry_run or count == 0:
         return result
-    backup, excel = _backup_then_open(workbook, backup_dir)
-    result["backup"] = str(backup)
+    if create_backup_before:
+        backup, excel = _backup_then_open(workbook, backup_dir)
+        result["backup"] = str(backup)
+    else:
+        excel = ExcelClient(workbook)
     with excel:
         for sheet, header, items in assignments:
             column = excel.headers(sheet)[header]
@@ -429,7 +436,13 @@ def validate_workbook(workbook: Path, kind: str) -> dict[str, Any]:
     return {"valid": not errors, "errors": errors, "error_count": len(errors)}
 
 
-def clear_workbook_data(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def clear_workbook_data(
+    workbook: Path,
+    kind: str,
+    backup_dir: Path,
+    dry_run: bool = False,
+    create_backup_before: bool = True,
+) -> dict[str, Any]:
     """設定・見出し・書式・VBAを残し、運用データだけを全シートから消去する。"""
     layouts = CLEAR_DATA_LAYOUTS[kind]
     result: dict[str, Any] = {
@@ -442,10 +455,11 @@ def clear_workbook_data(workbook: Path, kind: str, backup_dir: Path, dry_run: bo
     if dry_run:
         return result
     with ExcelClient(workbook) as excel:
-        backup = make_backup_path(workbook, backup_dir)
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        excel.workbook.SaveCopyAs(str(backup.resolve()))
-        result["backup"] = str(backup)
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
         for sheet_name, data_row in layouts:
             ws = excel.sheet(sheet_name)
             last_row = ws.UsedRange.Row + ws.UsedRange.Rows.Count - 1
@@ -488,7 +502,7 @@ def _progress_sources(excel: ExcelClient, sheet_name: str, id_header: str, attri
     return sources
 
 
-def sync_progress(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False) -> dict[str, Any]:
+def sync_progress(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
     if kind == "team":
         source_sheet, target_sheet, id_header, settings_sheet = "05_週次進捗", "06_進捗ログ", "タスクID", "09_設定"
         attribute_map = {"テーマ": "テーマID", "Level": "Level"}
@@ -503,9 +517,10 @@ def sync_progress(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
         result: dict[str, Any] = {"added": result_model.added, "updated": result_model.updated, "deleted": result_model.deleted, "deduplicated": result_model.deduplicated, "dry_run": dry_run}
         if dry_run or not (result_model.added or result_model.updated or result_model.deleted or result_model.deduplicated):
             return result
-        backup = make_backup_path(workbook, backup_dir)
-        excel.workbook.SaveCopyAs(str(backup.resolve()))
-        result["backup"] = str(backup)
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
         ws = excel.sheet(target_sheet)
         header_index = excel.headers(target_sheet)
         old_last = ws.UsedRange.Row + ws.UsedRange.Rows.Count - 1
@@ -533,19 +548,19 @@ def configured_output_dir(workbook: Path, kind: str) -> Path:
     return output_dir if output_dir.is_absolute() else workbook.parent / output_dir
 
 
-def refresh_all(workbook: Path, kind: str, dry_run: bool = False) -> dict[str, Any]:
+def refresh_all(workbook: Path, kind: str, dry_run: bool = False, create_backups: bool = True) -> dict[str, Any]:
     output_dir = configured_output_dir(workbook, kind)
     results: dict[str, Any] = {"output_dir": str(output_dir), "dry_run": dry_run}
-    if not dry_run:
+    if not dry_run and create_backups:
         results["backup"] = str(create_backup(workbook, output_dir))
     if kind == "personal":
-        results["process_inbox"] = process_inbox(workbook, output_dir, dry_run)
-    results["assign_ids"] = assign_ids(workbook, kind, output_dir, dry_run)
-    results["refresh_views"] = refresh_views(workbook, kind, output_dir, dry_run)
-    results["refresh_gantt"] = refresh_gantt(workbook, kind, output_dir, dry_run)
-    results["sync_progress"] = sync_progress(workbook, kind, output_dir, dry_run)
+        results["process_inbox"] = process_inbox(workbook, output_dir, dry_run, create_backups)
+    results["assign_ids"] = assign_ids(workbook, kind, output_dir, dry_run, create_backups)
+    results["refresh_views"] = refresh_views(workbook, kind, output_dir, dry_run, create_backups)
+    results["refresh_gantt"] = refresh_gantt(workbook, kind, output_dir, dry_run, create_backups)
+    results["sync_progress"] = sync_progress(workbook, kind, output_dir, dry_run, create_backups)
     if kind == "personal":
-        results["sync_completed"] = sync_completed(workbook, output_dir, dry_run)
+        results["sync_completed"] = sync_completed(workbook, output_dir, dry_run, create_backups)
     if not dry_run:
         with ExcelClient(workbook) as excel:
             formatted_columns = 0
