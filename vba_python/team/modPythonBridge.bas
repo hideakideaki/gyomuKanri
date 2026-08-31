@@ -71,7 +71,7 @@ Private Sub RunPythonAsync(ByVal arguments As String, ByVal operationName As Str
     Dim logFolder As String
     Dim logPath As String
     Dim commandText As String
-    Dim shellObject As Object
+    Dim processId As Double
     On Error GoTo EH
     If mCheckScheduled Then
         MsgBox mOperationName & "を実行中です。完了後にもう一度実行してください。", vbExclamation
@@ -83,18 +83,16 @@ Private Sub RunPythonAsync(ByVal arguments As String, ByVal operationName As Str
         Exit Sub
     End If
     ThisWorkbook.Save
-    logFolder = ThisWorkbook.Path & Application.PathSeparator & "logs"
-    EnsureBridgeFolder logFolder
+    logFolder = ResolveBridgeLogFolder()
     logPath = logFolder & Application.PathSeparator & Format$(Now, "yyyymmdd_hhnnss") & "_" & BOOK_KIND & ".log"
     mCompletionPath = logPath & ".status"
     If Dir$(mCompletionPath) <> vbNullString Then
         Kill mCompletionPath
     End If
-    commandText = "cmd.exe /D /V:ON /S /C ""call " & QuoteArg(runnerPath) & " " & arguments & _
+    commandText = "cmd.exe /D /V:ON /S /C ""cd /D " & QuoteArg(ThisWorkbook.Path) & _
+        " && call " & QuoteArg(runnerPath) & " " & arguments & _
         " > " & QuoteArg(logPath) & " 2>&1 & echo !errorlevel! > " & QuoteArg(mCompletionPath) & """"
-    Set shellObject = CreateObject("WScript.Shell")
-    shellObject.CurrentDirectory = ThisWorkbook.Path
-    shellObject.Run commandText, 0, False
+    processId = Shell(commandText, vbHide)
     mOperationName = operationName
     mLogPath = logPath
     mStartedAt = Now
@@ -104,21 +102,26 @@ Private Sub RunPythonAsync(ByVal arguments As String, ByVal operationName As Str
 EH:
     Application.StatusBar = False
     mCheckScheduled = False
-    MsgBox operationName & "を開始できませんでした。" & vbCrLf & Err.Description, vbCritical
+    MsgBox operationName & "を開始できませんでした。" & vbCrLf & _
+        "エラー番号: " & CStr(Err.Number) & vbCrLf & _
+        "内容: " & Err.Description & vbCrLf & _
+        "BAT: " & runnerPath & vbCrLf & _
+        "ログ: " & logPath, vbCritical
 End Sub
 
 Public Sub PythonBridgeCheckCompletion()
-    Dim fso As Object
-    Dim stream As Object
+    Dim fileNumber As Integer
+    Dim exitCodeText As String
     Dim exitCode As Long
     On Error GoTo RetryLater
     mCheckScheduled = False
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    If fso.FileExists(mCompletionPath) Then
-        Set stream = fso.OpenTextFile(mCompletionPath, 1, False)
-        exitCode = CLng(Trim$(stream.ReadLine))
-        stream.Close
-        fso.DeleteFile mCompletionPath, True
+    If Dir$(mCompletionPath) <> vbNullString Then
+        fileNumber = FreeFile
+        Open mCompletionPath For Input As #fileNumber
+        Line Input #fileNumber, exitCodeText
+        Close #fileNumber
+        exitCode = CLng(Trim$(exitCodeText))
+        Kill mCompletionPath
         Application.StatusBar = False
         If exitCode = 0 Then
             MsgBox mOperationName & "が完了しました。", vbInformation
@@ -184,9 +187,21 @@ Private Function QuoteArg(ByVal value As String) As String
 End Function
 
 Private Sub EnsureBridgeFolder(ByVal folderPath As String)
-    Dim fso As Object
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    If Not fso.FolderExists(folderPath) Then
-        fso.CreateFolder folderPath
+    If Dir$(folderPath, vbDirectory) = vbNullString Then
+        MkDir folderPath
     End If
 End Sub
+
+Private Function ResolveBridgeLogFolder() As String
+    Dim folderPath As String
+    On Error GoTo UseTempFolder
+    folderPath = ThisWorkbook.Path & Application.PathSeparator & "logs"
+    EnsureBridgeFolder folderPath
+    ResolveBridgeLogFolder = folderPath
+    Exit Function
+UseTempFolder:
+    Err.Clear
+    folderPath = Environ$("TEMP") & Application.PathSeparator & "TaskManagementLogs"
+    EnsureBridgeFolder folderPath
+    ResolveBridgeLogFolder = folderPath
+End Function

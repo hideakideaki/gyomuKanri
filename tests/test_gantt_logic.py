@@ -1,10 +1,45 @@
 import unittest
 from datetime import date
 
-from task_management.common.operations import _gantt_color, _gantt_rows, _task_period
+from task_management.common.operations import EXCEL_BUSY_HRESULT, _gantt_color, _gantt_rows, _set_gantt_fill, _task_period
+
+
+class _Interior:
+    def __init__(self, failures=0, hresult=EXCEL_BUSY_HRESULT):
+        self.failures = failures
+        self.hresult = hresult
+        self.values = []
+
+    @property
+    def Color(self):
+        return self.values[-1] if self.values else None
+
+    @Color.setter
+    def Color(self, value):
+        if self.failures:
+            self.failures -= 1
+            error = RuntimeError("Excel busy")
+            error.hresult = self.hresult
+            raise error
+        self.values.append(value)
+
+
+class _Target:
+    def __init__(self, interior):
+        self.Interior = interior
 
 
 class GanttLogicTests(unittest.TestCase):
+
+    def test_gantt_fill_retries_excel_busy_error(self):
+        interior = _Interior(failures=2)
+        _set_gantt_fill(_Target(interior), 123, attempts=3)
+        self.assertEqual(interior.values, [123])
+
+    def test_gantt_fill_does_not_hide_other_errors(self):
+        interior = _Interior(failures=1, hresult=-1)
+        with self.assertRaises(RuntimeError):
+            _set_gantt_fill(_Target(interior), 123)
     def test_personal_period_fallback(self):
         row = {"予定開始日": date(2026, 8, 26), "期限": None}
         self.assertEqual(_task_period(row, "personal"), (date(2026, 8, 26), date(2026, 8, 26)))

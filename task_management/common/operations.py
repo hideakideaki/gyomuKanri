@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import date, datetime, time, timedelta
+from time import sleep
 from typing import Any
 
 from task_management.personal.task import assign_management_ids, assign_personal_task_ids, normalize_personal_hierarchy, validate_personal_hierarchy
@@ -16,6 +17,22 @@ from .excel_formats import apply_named_column_formats
 from .indexes import monday_iso
 from .progress_logic import ProgressSource, sync_progress_records
 from .rich_text import hex_to_ole_color
+
+
+EXCEL_BUSY_HRESULT = -2146777998  # 0x800AC472
+
+
+def _set_gantt_fill(target: Any, color: int, attempts: int = 5) -> None:
+    """Excelが一時的にビジーの場合だけ、ガントの塗りつぶしを短時間再試行する。"""
+    for attempt in range(attempts):
+        try:
+            target.Interior.Color = color
+            return
+        except Exception as exc:
+            hresult = getattr(exc, "hresult", exc.args[0] if exc.args else None)
+            if hresult != EXCEL_BUSY_HRESULT or attempt == attempts - 1:
+                raise
+            sleep(0.1 * (attempt + 1))
 
 
 CLEAR_DATA_LAYOUTS: dict[str, tuple[tuple[str, int], ...]] = {
@@ -337,13 +354,16 @@ def refresh_gantt(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = F
                     for week, column in periods.items():
                         week_start = date.fromisoformat(week)
                         if week_start <= end and week_start + timedelta(days=6) >= start:
-                            ws.Cells(offset, column).Interior.Color = hex_to_ole_color(color)
+                            _set_gantt_fill(ws.Cells(offset, column), hex_to_ole_color(color))
                 else:
-                    day_count = last_col - left_end
-                    for index in range(day_count):
-                        current = timeline_start + timedelta(days=index)
-                        if start <= current <= end:
-                            ws.Cells(offset, left_end + 1 + index).Interior.Color = hex_to_ole_color(color)
+                    timeline_end = timeline_start + timedelta(days=last_col - left_end - 1)
+                    visible_start = max(start, timeline_start)
+                    visible_end = min(end, timeline_end)
+                    if visible_start <= visible_end:
+                        first_column = left_end + 1 + (visible_start - timeline_start).days
+                        last_column = left_end + 1 + (visible_end - timeline_start).days
+                        target = ws.Range(ws.Cells(offset, first_column), ws.Cells(offset, last_column))
+                        _set_gantt_fill(target, hex_to_ole_color(color))
             apply_named_column_formats(excel, sheet_name, data_row=data_row)
         excel.save()
         return result

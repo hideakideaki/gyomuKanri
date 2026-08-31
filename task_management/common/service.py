@@ -14,6 +14,14 @@ from .specs import WorkbookSpec
 
 
 def _normalize_legacy_personal_dates(data: WorkbookData, spec: WorkbookSpec) -> None:
+    settings_sheet = "07_設定" if spec.kind == "personal" else "09_設定"
+    for table in data.tables:
+        if table.sheet != settings_sheet:
+            continue
+        for record in table.records:
+            if record.key == "エクスポートフォルダパス":
+                # 保存先はPCごとのローカル設定。別PCの絶対パスで上書きしない。
+                record.fields.pop("設定値", None)
     if spec.kind != "personal":
         return
     for table in data.tables:

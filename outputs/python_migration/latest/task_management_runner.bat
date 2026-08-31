@@ -1,27 +1,44 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 set "SCRIPT_DIR=%~dp0"
-set "PROJECT_ROOT=%SCRIPT_DIR%"
+set "PYTHON_EXE="
+set "PROJECT_ROOT="
 
-if exist "%PROJECT_ROOT%task_management\__init__.py" goto project_found
-for %%I in ("%SCRIPT_DIR%..\..\..") do set "PROJECT_ROOT=%%~fI\"
+if not exist "%SCRIPT_DIR%task_management_env.cmd" (
+    echo ERROR: task_management_env.cmd was not found.
+    echo Copy task_management_env.example.cmd as task_management_env.cmd and edit it.
+    exit /b 2
+)
+call "%SCRIPT_DIR%task_management_env.cmd"
 
-:project_found
-if not exist "%PROJECT_ROOT%task_management\__init__.py" (
-    echo ERROR: task_management package was not found.
-    echo Expected project root: "%PROJECT_ROOT%"
+if not defined PYTHON_EXE (
+    echo ERROR: PYTHON_EXE is not set in task_management_env.cmd.
+    exit /b 2
+)
+if not exist "%PYTHON_EXE%" (
+    echo ERROR: PYTHON_EXE does not exist.
+    echo Configured path: "%PYTHON_EXE%"
+    exit /b 3
+)
+if not defined PROJECT_ROOT (
+    echo ERROR: PROJECT_ROOT is not set in task_management_env.cmd.
+    exit /b 2
+)
+if not exist "%PROJECT_ROOT%\task_management\__init__.py" (
+    echo ERROR: task_management package was not found under PROJECT_ROOT.
+    echo Configured root: "%PROJECT_ROOT%"
     exit /b 2
 )
 
-set "CONDA_PYTHON=%USERPROFILE%\miniconda3\python.exe"
-if not exist "%CONDA_PYTHON%" (
-    echo ERROR: Miniconda Python was not found.
-    echo Expected Python: "%CONDA_PYTHON%"
+"%PYTHON_EXE%" -c "import win32com.client" >nul 2>&1
+if errorlevel 1 (
+    echo ERROR: pywin32 is not available in the configured Python environment.
+    echo Python: "%PYTHON_EXE%"
     exit /b 3
 )
 
 pushd "%PROJECT_ROOT%"
-"%CONDA_PYTHON%" -m task_management.cli %*
+"%PYTHON_EXE%" -m task_management.cli %*
 set "RESULT=%ERRORLEVEL%"
 popd
 exit /b %RESULT%

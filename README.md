@@ -67,6 +67,9 @@
 ## Windows / Miniconda環境での注意
 
 - 主要ボタンはVBAブリッジからMinicondaのPython処理を非同期で呼び出します。
+- 別PCでは`task_management_env.cmd`の`PYTHON_EXE`と`PROJECT_ROOT`をそのPCの配置に合わせて設定します。
+- Pythonソースはプロジェクト直下の`task_management`だけを正本とし、配布フォルダには複製しません。
+- 会社PCでの事前確認には`check_environment.bat`を使用してください。
 - 開始時のポップアップは表示しません。処理中はExcelのステータスバーへ表示し、終了時に成功または失敗のポップアップを表示します。
 - 失敗時はポップアップに表示される`logs`フォルダ内のログを確認してください。同時に複数のPython処理は実行できません。
 - JSONとバックアップの出力先には、会社PCで書込み権限があるローカルまたは社内許可済みフォルダを指定してください。
