@@ -11,6 +11,26 @@ from .common.backup import create_backup
 from .common.service import export_workbook, import_workbook
 from .common.safe_replace import replace_import_preflight, safe_replace_import
 from .common.specs import get_spec
+from .common.workbook_upgrade import upgrade_workbook_layout
+
+
+DEFAULT_PERSONAL_WORKBOOK = "個人タスク管理_Python連携版.xlsm"
+DEFAULT_TEAM_WORKBOOK = "複数テーマ階層型タスク管理_Python連携版.xlsm"
+
+
+def configured_workbooks(folder: Path) -> list[tuple[str, Path]]:
+    names = {"personal": DEFAULT_PERSONAL_WORKBOOK, "team": DEFAULT_TEAM_WORKBOOK}
+    config_path = folder / "workbooks.json"
+    if config_path.is_file():
+        configured = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        for kind in names:
+            value = str(configured.get(kind) or "").strip()
+            if value:
+                if Path(value).name != value:
+                    raise ValueError(f"workbooks.jsonの{kind}にはファイル名だけを指定してください。")
+                names[kind] = value
+    names = names.items()
+    return [(kind, folder / name) for kind, name in names]
 
 
 def parser() -> argparse.ArgumentParser:
@@ -52,7 +72,7 @@ def parser() -> argparse.ArgumentParser:
     refresh.add_argument("workbook", type=Path)
     refresh.add_argument("--dry-run", action="store_true")
     batch = commands.add_parser("batch-folder")
-    batch.add_argument("operation", choices=("export-auto", "backup-auto", "validate", "refresh-all"))
+    batch.add_argument("operation", choices=("export-auto", "backup-auto", "validate", "refresh-all", "upgrade-layout"))
     batch.add_argument("folder", type=Path)
     for command_name in ("process-inbox", "sync-completed"):
         command = commands.add_parser(command_name)
@@ -148,13 +168,13 @@ def main() -> int:
     elif args.command == "refresh-all":
         print(json.dumps(refresh_all(args.workbook, args.kind, args.dry_run), ensure_ascii=False, indent=2))
     elif args.command == "batch-folder":
-        workbooks = sorted(args.folder.glob("*_Python連携版.xlsm"))
-        if not workbooks:
-            print(json.dumps({"status": "error", "message": "対象Excelが見つかりません。"}, ensure_ascii=False))
+        configured = configured_workbooks(args.folder)
+        missing = [str(workbook) for _, workbook in configured if not workbook.is_file()]
+        if missing:
+            print(json.dumps({"status": "error", "message": "設定された対象Excelが見つかりません。", "missing": missing}, ensure_ascii=False, indent=2))
             return 2
         results = []
-        for workbook in workbooks:
-            kind = "personal" if "個人" in workbook.name else "team"
+        for kind, workbook in configured:
             if args.operation == "export-auto":
                 from datetime import datetime
                 output_dir = configured_output_dir(workbook, kind)
@@ -166,8 +186,10 @@ def main() -> int:
                 result = {"backup": str(create_backup(workbook, configured_output_dir(workbook, kind)))}
             elif args.operation == "validate":
                 result = validate_workbook(workbook, kind)
-            else:
+            elif args.operation == "refresh-all":
                 result = refresh_all(workbook, kind)
+            else:
+                result = upgrade_workbook_layout(workbook, kind, args.folder / "backups")
             results.append({"kind": kind, "workbook": str(workbook), "result": result})
         print(json.dumps({"status": "success", "results": results}, ensure_ascii=False, indent=2))
     else:
