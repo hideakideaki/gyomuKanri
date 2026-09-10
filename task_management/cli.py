@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .common.migration import migrate_file
 from .common.confirmation import confirm_clear_data, confirm_replace_import
-from .common.operations import assign_ids, clear_workbook_data, configured_output_dir, format_date_columns, process_inbox, refresh_all, refresh_gantt, refresh_views, sync_completed, sync_gantt_dates, sync_progress, validate_workbook
+from .common.operations import assign_ids, clear_workbook_data, configured_output_dir, format_date_columns, process_inbox, refresh_all, refresh_gantt, refresh_views, refresh_weekly_progress, sync_completed, sync_gantt_dates, sync_progress, validate_workbook
 from .common.backup import create_backup
 from .common.service import export_workbook, import_workbook
 from .common.safe_replace import replace_import_preflight, safe_replace_import
@@ -52,7 +52,7 @@ def parser() -> argparse.ArgumentParser:
     migration = commands.add_parser("migrate-v2")
     migration.add_argument("source", type=Path)
     migration.add_argument("output", type=Path)
-    for command_name in ("assign-ids", "sync-progress", "refresh-views", "refresh-gantt", "sync-gantt-dates"):
+    for command_name in ("assign-ids", "sync-progress", "refresh-views", "refresh-gantt", "refresh-weekly-progress", "sync-gantt-dates"):
         command = commands.add_parser(command_name)
         command.add_argument("kind", choices=("team", "personal"))
         command.add_argument("workbook", type=Path)
@@ -125,6 +125,8 @@ def main() -> int:
         print(json.dumps(refresh_views(args.workbook, args.kind, args.backup_dir, args.dry_run), ensure_ascii=False, indent=2))
     elif args.command == "refresh-gantt":
         print(json.dumps(refresh_gantt(args.workbook, args.kind, args.backup_dir, args.dry_run), ensure_ascii=False, indent=2))
+    elif args.command == "refresh-weekly-progress":
+        print(json.dumps(refresh_weekly_progress(args.workbook, args.kind, args.backup_dir, args.dry_run), ensure_ascii=False, indent=2))
     elif args.command == "sync-gantt-dates":
         print(json.dumps(sync_gantt_dates(args.workbook, args.kind, args.backup_dir, args.dry_run), ensure_ascii=False, indent=2))
     elif args.command == "process-inbox":

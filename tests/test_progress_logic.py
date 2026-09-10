@@ -2,9 +2,25 @@ import unittest
 from datetime import date
 
 from task_management.common.progress_logic import ProgressSource, sync_progress_records
+from task_management.common.operations import _ordered_task_ids, _progress_row_mapping
 
 
 class ProgressLogicTests(unittest.TestCase):
+    def test_weekly_progress_uses_current_task_row_order(self):
+        tasks = [
+            {"個人タスクID": "PT_00002"},
+            {"個人タスクID": ""},
+            {"個人タスクID": "PT_00001"},
+        ]
+        self.assertEqual(_ordered_task_ids(tasks, "個人タスクID"), ["PT_00002", "PT_00001"])
+
+    def test_personal_progress_mapping_uses_task_master_fields(self):
+        task_headers = {name: index for index, name in enumerate(("個人タスクID", "テーマ名", "タスク名", "状態"), start=1)}
+        progress_headers = {name: index for index, name in enumerate(("テーマ", "個人タスクID", "タスク名", "状態"), start=1)}
+        self.assertEqual(
+            _progress_row_mapping("personal", task_headers, progress_headers),
+            {"テーマ": "テーマ名", "個人タスクID": "個人タスクID", "タスク名": "タスク名", "状態": "状態"},
+        )
     def test_update_and_add_use_task_week_key(self):
         existing = [{"ログID": "LOG_00002", "タスクID": "T1", "週": date(2026, 8, 24), "進捗本文": "旧"}]
         sources = [

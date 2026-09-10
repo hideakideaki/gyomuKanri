@@ -522,6 +522,117 @@ def _progress_sources(excel: ExcelClient, sheet_name: str, id_header: str, attri
     return sources
 
 
+def _progress_row_mapping(kind: str, task_headers: dict[str, int], progress_headers: dict[str, int]) -> dict[str, str]:
+    if kind == "personal":
+        candidates = {
+            "テーマ": "テーマ名",
+            "個人タスクID": "個人タスクID",
+            "タスク名": "タスク名",
+            "次アクション": "次アクション",
+            "タスク種別": "タスク種別",
+            "優先度": "優先度",
+            "状態": "状態",
+            "期限": "期限",
+        }
+    else:
+        candidates = {
+            "テーマ": "テーマID",
+            "タスクID": "タスクID",
+            "Level": "Level",
+            "担当": "担当",
+            "状態": "状態",
+        }
+        for header in progress_headers:
+            if header.startswith("L") and header[1:].isdigit():
+                candidates[header] = header
+    return {
+        target: source
+        for target, source in candidates.items()
+        if target in progress_headers and source in task_headers
+    }
+
+
+def _ordered_task_ids(tasks: list[dict[str, Any]], id_header: str) -> list[str]:
+    return [
+        str(task.get(id_header) or "").strip()
+        for task in tasks
+        if str(task.get(id_header) or "").strip()
+    ]
+
+
+def refresh_weekly_progress(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
+    """週次進捗の行をタスクマスターと同じID順に揃え、週別本文を保持する。"""
+    task_sheet = "02_タスク" if kind == "team" else "01_個人タスク"
+    progress_sheet = "05_週次進捗" if kind == "team" else "05_週次振り返り"
+    id_header = "タスクID" if kind == "team" else "個人タスクID"
+    with ExcelClient(workbook, read_only=dry_run) as excel:
+        task_headers = excel.headers(task_sheet)
+        progress_headers = excel.headers(progress_sheet)
+        _, tasks = excel.read_table(task_sheet)
+        task_ids = _ordered_task_ids(tasks, id_header)
+        existing_rows = excel.id_index(progress_sheet, id_header)
+        old_order = [task_id for task_id, _ in sorted(existing_rows.items(), key=lambda item: item[1])]
+        result: dict[str, Any] = {
+            "rows": len(task_ids),
+            "added": len(set(task_ids) - set(old_order)),
+            "removed": len(set(old_order) - set(task_ids)),
+            "reordered": old_order != task_ids,
+            "dry_run": dry_run,
+        }
+        if dry_run:
+            return result
+        if create_backup_before:
+            backup = make_backup_path(workbook, backup_dir)
+            excel.workbook.SaveCopyAs(str(backup.resolve()))
+            result["backup"] = str(backup)
+
+        ws = excel.sheet(progress_sheet)
+        week_columns = set(excel.week_index(progress_sheet).values())
+        mapping = _progress_row_mapping(kind, task_headers, progress_headers)
+        controlled_columns = {progress_headers[target] for target in mapping}
+        last_column = ws.UsedRange.Column + ws.UsedRange.Columns.Count - 1
+        old_last_row = ws.UsedRange.Row + ws.UsedRange.Rows.Count - 1
+        preserved: dict[str, dict[int, Any]] = {}
+        rich_text: dict[tuple[str, int], Any] = {}
+        hidden: dict[str, bool] = {}
+        for task_id, row_number in existing_rows.items():
+            hidden[task_id] = bool(ws.Rows(row_number).Hidden)
+            preserved[task_id] = {}
+            for column in range(1, last_column + 1):
+                if column in controlled_columns:
+                    continue
+                value = ws.Cells(row_number, column).Value
+                if column in week_columns:
+                    if value not in (None, ""):
+                        rich_text[(task_id, column)] = excel.read_rich_text(ws.Cells(row_number, column))
+                elif value not in (None, ""):
+                    preserved[task_id][column] = value
+
+        if old_last_row >= 3:
+            ws.Range(ws.Cells(3, 1), ws.Cells(old_last_row, last_column)).ClearContents()
+            ws.Rows(f"3:{old_last_row}").Hidden = False
+        task_by_id = {str(task.get(id_header) or "").strip(): task for task in tasks if str(task.get(id_header) or "").strip()}
+        for row_number, task_id in enumerate(task_ids, start=3):
+            if row_number > old_last_row and old_last_row >= 3:
+                template = ws.Range(ws.Cells(3, 1), ws.Cells(3, last_column))
+                target = ws.Range(ws.Cells(row_number, 1), ws.Cells(row_number, last_column))
+                template.Copy()
+                target.PasteSpecial(Paste=-4122)  # xlPasteFormats
+            task = task_by_id[task_id]
+            for target_header, source_header in mapping.items():
+                ws.Cells(row_number, progress_headers[target_header]).Value = task.get(source_header)
+            for column, value in preserved.get(task_id, {}).items():
+                ws.Cells(row_number, column).Value = value
+            for column in week_columns:
+                value = rich_text.get((task_id, column))
+                if value is not None:
+                    excel.write_rich_text(ws.Cells(row_number, column), value)
+            ws.Rows(row_number).Hidden = hidden.get(task_id, False)
+        apply_named_column_formats(excel, progress_sheet)
+        excel.save()
+        return result
+
+
 def sync_progress(workbook: Path, kind: str, backup_dir: Path, dry_run: bool = False, create_backup_before: bool = True) -> dict[str, Any]:
     if kind == "team":
         source_sheet, target_sheet, id_header, settings_sheet = "05_週次進捗", "06_進捗ログ", "タスクID", "09_設定"
@@ -578,6 +689,7 @@ def refresh_all(workbook: Path, kind: str, dry_run: bool = False, create_backups
     results["assign_ids"] = assign_ids(workbook, kind, output_dir, dry_run, create_backups)
     results["refresh_views"] = refresh_views(workbook, kind, output_dir, dry_run, create_backups)
     results["refresh_gantt"] = refresh_gantt(workbook, kind, output_dir, dry_run, create_backups)
+    results["refresh_weekly_progress"] = refresh_weekly_progress(workbook, kind, output_dir, dry_run, create_backups)
     results["sync_progress"] = sync_progress(workbook, kind, output_dir, dry_run, create_backups)
     if kind == "personal":
         results["sync_completed"] = sync_completed(workbook, output_dir, dry_run, create_backups)
